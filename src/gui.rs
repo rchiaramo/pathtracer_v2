@@ -7,8 +7,8 @@ pub struct GUI {
     pub platform: WinitPlatform,
     pub imgui: imgui::Context,
     pub imgui_renderer: Renderer,
-    pub(crate) last_cursor: Option<MouseCursor>,
-    pub(crate) last_frame: Instant,
+    pub last_cursor: Option<MouseCursor>,
+    pub last_frame: Instant,
 }
 
 impl GUI {
@@ -17,14 +17,14 @@ impl GUI {
                -> Option<Self> {
 
         let mut imgui = imgui::Context::create();
-        let mut platform = imgui_winit_support::WinitPlatform::new(&mut imgui);
+        let mut platform = WinitPlatform::new(&mut imgui);
         platform.attach_window(
             imgui.io_mut(),
             &window,
             imgui_winit_support::HiDpiMode::Default,
         );
         
-        imgui.set_ini_filename(std::path::PathBuf::from("~/Documents/Rust/pathtracer_v2/imgui.ini"));
+        imgui.set_ini_filename(std::path::PathBuf::from("~/Documents/Rust/pathracer_v2/imgui.ini"));
 
         let hidpi_factor = window.scale_factor();
         let font_size = (13.0 * hidpi_factor) as f32;
@@ -58,13 +58,13 @@ impl GUI {
     }
 
     pub fn display_ui(&mut self, window: &winit::window::Window){
-
         let ui = self.imgui.frame();
         self.platform.prepare_render(&ui, &window);
         {
             let window = ui.window("Hello Imgui from WGPU!");
             window
-                .size([300.0, 300.0], imgui::Condition::FirstUseEver)
+                .size([400.0, 100.0], imgui::Condition::FirstUseEver)
+                .position([0.0, 0.0], imgui::Condition::FirstUseEver)
                 .build(|| {
                     ui.text(format!(
                         "Avg compute time: {:.3}ms, render progress: {:.1} %",

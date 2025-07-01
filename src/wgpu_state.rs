@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use imgui::Context;
 use crate::gui::GUI;
+use crate::pathtracer::PathTracer;
 
 pub struct WGPUState<'a> {
     window: Arc<winit::window::Window>,
-    pub(crate) device: wgpu::Device,
-    pub(crate) queue: wgpu::Queue,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface<'a>,
     surface_format: wgpu::TextureFormat,
@@ -91,19 +92,21 @@ impl<'a> WGPUState<'a> {
         self.configure_surface();
     }
 
-    pub fn render(&mut self, gui: &mut GUI) {
+    pub fn render(&mut self, gui: &mut GUI, pt: &mut PathTracer) {
         let surface_texture = self
             .surface
             .get_current_texture()
             .expect("Failed to acquire next surface texture");
+        
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor {
                 format: Some(self.surface_format.add_srgb_suffix()),
                 ..Default::default()
             });
+        
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        let renderpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
+        let mut display_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                 view: &texture_view,
@@ -118,7 +121,11 @@ impl<'a> WGPUState<'a> {
             occlusion_query_set: None,
         });
 
-        drop(renderpass);
+        display_pass.set_pipeline(pt.display_pipeline());
+        display_pass.set_bind_group(0, pt.display_bind_group(), &[]);
+        display_pass.draw(0..6, 0..1);
+
+        drop(display_pass);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("UI RenderPass"),
@@ -134,7 +141,7 @@ impl<'a> WGPUState<'a> {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        
+
         let gui_draw_data = Context::render(&mut gui.imgui);
         gui.imgui_renderer.render(gui_draw_data, &self.queue, &self.device, &mut pass).expect("Failed to render");
         drop(pass);

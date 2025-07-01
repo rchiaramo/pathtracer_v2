@@ -1,6 +1,8 @@
 mod app;
 mod wgpu_state;
 mod gui;
+mod pathtracer;
+mod utilities;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::App;

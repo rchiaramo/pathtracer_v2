@@ -7,12 +7,15 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use crate::gui::GUI;
+use crate::pathtracer::{GPUFrameBuffer, PathTracer};
+use crate::utilities::u8cast::any_as_u8_slice;
 use crate::wgpu_state::WGPUState;
 
 #[derive(Default)]
 pub struct App<'a> {
     wgpu_state: Option<WGPUState<'a>>,
-    gui_controller: Option<GUI>
+    gui_controller: Option<GUI>,
+    path_tracer: Option<PathTracer>,
 }
 
 impl ApplicationHandler for App<'_> {
@@ -21,22 +24,39 @@ impl ApplicationHandler for App<'_> {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_inner_size(LogicalSize::new(800.0, 600.0))
+                        .with_inner_size(LogicalSize::new(1200.0, 675.0))
                         .with_title("It's WGPU time!"))
                 .unwrap(),
         );
 
+        let max_viewport_resolution = window
+            .available_monitors()
+            .map(|monitor| -> u32 {
+                let viewport = monitor.size();
+                let size = (viewport.width, viewport.height);
+                size.0 * size.1
+            })
+            .max()
+            .expect("must have at least one monitor");
+
         let state = pollster::block_on(WGPUState::new(window.clone()));
 
         self.gui_controller = GUI::new(&window, &state.surface_config, &state.device, &state.queue);
+        self.path_tracer = PathTracer::new(&state.device, max_viewport_resolution);
         self.wgpu_state = Some(state);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         let state = self.wgpu_state.as_mut().unwrap();
         let gui = self.gui_controller.as_mut().unwrap();
+        let path_tracer = self.path_tracer.as_mut().unwrap();
         let window = state.get_window();
         if window_id != window.id() { return; }
+        let size = window.inner_size();
+        
+        let frame = GPUFrameBuffer::new(size.width, size.height, 1, 1);
+        let frame_data = unsafe { any_as_u8_slice(&frame) };
+        state.queue.write_buffer(path_tracer.frame_buffer(), 0, frame_data);
 
         let now = Instant::now();
         gui.imgui.io_mut().update_delta_time(now - gui.last_frame);
@@ -59,8 +79,9 @@ impl ApplicationHandler for App<'_> {
             },
 
             WindowEvent::RedrawRequested => {
+                
                 gui.display_ui(&window);
-                state.render(gui);
+                state.render(gui, path_tracer);
                 state.get_window().request_redraw();
             },
 
@@ -73,10 +94,10 @@ impl ApplicationHandler for App<'_> {
                 window.request_redraw();
             },
         }
-       
+
     }
-    
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         let state = self.wgpu_state.as_mut().unwrap();
         let gui = self.gui_controller.as_mut().unwrap();
         let window = state.get_window();
