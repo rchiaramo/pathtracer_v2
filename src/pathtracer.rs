@@ -1,7 +1,9 @@
 use wgpu::{BindGroupDescriptor};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::BufferDescriptor;
+use crate::gui::GUI;
 use crate::utilities::u8cast::{any_as_u8_slice, vec_as_u8_slice};
+use crate::wgpu_state::WGPUState;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -23,15 +25,19 @@ impl GPUFrameBuffer {
     }
 }
 
-pub struct PathTracer {
+pub struct PathTracer<'a> {
+    pub wgpu_state: WGPUState<'a>,
     image_buffer: wgpu::Buffer,
     frame_buffer: wgpu::Buffer,
     display_bind_group: wgpu::BindGroup,
     display_pipeline: wgpu::RenderPipeline,
 }
 
-impl PathTracer {
-    pub fn new(device: &wgpu::Device, max_window_size: u32) -> Option<Self> {
+impl<'a> PathTracer<'a> {
+    pub fn new(wgpu_state: WGPUState<'a>, max_window_size: u32) -> Option<Self> {
+        
+        let device = &wgpu_state.device;
+        
         let image = vec![[0.1f32, 0.2, 0.3]; max_window_size as usize];
         let image_bytes = unsafe {
             vec_as_u8_slice(&image)
@@ -143,6 +149,7 @@ impl PathTracer {
         
         Some(
             Self {
+                wgpu_state,
                 image_buffer,
                 frame_buffer,
                 display_bind_group,
@@ -161,5 +168,9 @@ impl PathTracer {
     
     pub fn display_bind_group(&self) -> &wgpu::BindGroup {
         &self.display_bind_group
+    }
+
+    pub fn render(&self, gui: &mut GUI) {
+        self.wgpu_state.render(gui, &self.display_pipeline, &self.display_bind_group);
     }
 }

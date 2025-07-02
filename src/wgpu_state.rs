@@ -81,6 +81,14 @@ impl<'a> WGPUState<'a> {
     pub fn get_window(&self) -> &winit::window::Window {
         &self.window
     }
+    
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+    
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
 
     fn configure_surface(&mut self) {
         self.surface_config.format = self.surface_format;
@@ -92,7 +100,9 @@ impl<'a> WGPUState<'a> {
         self.configure_surface();
     }
 
-    pub fn render(&mut self, gui: &mut GUI, pt: &mut PathTracer) {
+    pub fn render(&self, gui: &mut GUI, 
+                  display_pipeline: &wgpu::RenderPipeline, 
+                  display_bind_group: &wgpu::BindGroup) {
         let surface_texture = self
             .surface
             .get_current_texture()
@@ -121,8 +131,8 @@ impl<'a> WGPUState<'a> {
             occlusion_query_set: None,
         });
 
-        display_pass.set_pipeline(pt.display_pipeline());
-        display_pass.set_bind_group(0, pt.display_bind_group(), &[]);
+        display_pass.set_pipeline(display_pipeline);
+        display_pass.set_bind_group(0, display_bind_group, &[]);
         display_pass.draw(0..6, 0..1);
 
         drop(display_pass);

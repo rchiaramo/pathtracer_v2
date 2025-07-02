@@ -13,15 +13,13 @@ use crate::wgpu_state::WGPUState;
 
 #[derive(Default)]
 pub struct App<'a> {
-    wgpu_state: Option<WGPUState<'a>>,
     gui_controller: Option<GUI>,
-    path_tracer: Option<PathTracer>,
+    path_tracer: Option<PathTracer<'a>>,
     user_input: UserInput
 }
 
 impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.wgpu_state.is_some() { return; }
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -41,26 +39,25 @@ impl ApplicationHandler for App<'_> {
             .max()
             .expect("must have at least one monitor");
 
-        let state = pollster::block_on(WGPUState::new(window.clone()));
+        let wgpu_state = pollster::block_on(WGPUState::new(window.clone()));
 
-        self.gui_controller = GUI::new(&window, &state.surface_config, &state.device, &state.queue);
-        self.path_tracer = PathTracer::new(&state.device, max_viewport_resolution);
-        self.wgpu_state = Some(state);
+        self.gui_controller = GUI::new(&window, &wgpu_state.surface_config, &wgpu_state.device, &wgpu_state.queue);
+        self.path_tracer = PathTracer::new(wgpu_state, max_viewport_resolution);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        // let state = self.wgpu_state.as_mut().unwrap();
-        let gui = self.gui_controller.as_mut().unwrap();
-        // let path_tracer = self.path_tracer.as_mut().unwrap();
-        // let window = state.get_window();
-        // if window_id != window.id() { return; }
-        // let size = window.inner_size();
-        // 
+        
+        let path_tracer = self.path_tracer.as_mut().unwrap();
+        let window = path_tracer.wgpu_state.get_window();
+        if window_id != window.id() { return; }
+        
+        
         // // this shouldn't be here...it should be inside the renderer
         // let frame = GPUFrameBuffer::new(size.width, size.height, 1, 1);
         // let frame_data = unsafe { any_as_u8_slice(&frame) };
         // state.queue.write_buffer(path_tracer.frame_buffer(), 0, frame_data);
 
+        let gui = self.gui_controller.as_mut().unwrap();
         let now = Instant::now();
         gui.imgui.io_mut().update_delta_time(now - gui.last_frame);
         gui.last_frame = now;
@@ -81,7 +78,7 @@ impl ApplicationHandler for App<'_> {
                 // let logical_size = size.to_logical(window.scale_factor());
                 // let logical_size = gui.platform.scale_size_from_winit(window, logical_size);
                 // gui.imgui.io_mut().display_size = [logical_size.width as f32, logical_size.height as f32];
-                state.resize(size);
+                path_tracer.wgpu_state.resize(size);
             },
 
             WindowEvent::RedrawRequested => {
@@ -90,8 +87,8 @@ impl ApplicationHandler for App<'_> {
                     println!("user_input {:?}", self.user_input);
                     self.user_input.reset_state();
                 }
-                state.render(gui, path_tracer);
-                state.get_window().request_redraw();
+                path_tracer.render(gui);
+                window.request_redraw();
             },
 
             _ => {
@@ -107,9 +104,8 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let state = self.wgpu_state.as_mut().unwrap();
+        let window = self.path_tracer.as_mut().unwrap().wgpu_state.get_window();
         let gui = self.gui_controller.as_mut().unwrap();
-        let window = state.get_window();
         gui.platform
             .prepare_frame(gui.imgui.io_mut(), &window)
             .expect("WinitPlatform::prepare_frame failed");
