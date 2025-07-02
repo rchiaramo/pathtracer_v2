@@ -97,14 +97,14 @@ impl<'a> WGPUState<'a> {
             .surface
             .get_current_texture()
             .expect("Failed to acquire next surface texture");
-        
+
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor {
                 format: Some(self.surface_format.add_srgb_suffix()),
                 ..Default::default()
             });
-        
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let mut display_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label: None,
