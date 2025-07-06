@@ -9,6 +9,9 @@ pub struct UserInput {
     key_released: bool,
     key: imgui::Key,
     mouse_delta: [f32; 2],
+    vfov: f32,
+    defocus_angle: f32,
+    focus_distance: f32,
     state_changed: bool,
 }
 
@@ -19,6 +22,9 @@ impl Default for UserInput {
             key_released: false,
             key: imgui::Key::Slash,
             mouse_delta: [0.0; 2],
+            vfov: 90.0f32,
+            defocus_angle: 0.0,
+            focus_distance: 10.0,
             state_changed: false,
         }
     }
@@ -63,6 +69,33 @@ impl UserInput {
     
     pub fn set_mouse_delta(&mut self, mouse_delta: [f32; 2]) {
         self.mouse_delta = mouse_delta;
+        self.state_changed = true;
+    }
+    
+    pub fn vfov(&self) -> f32 {
+        self.vfov
+    }
+    
+    fn set_vfov(&mut self, deg: f32) {
+        self.vfov = deg;
+        self.state_changed = true;
+    }
+    
+    pub fn defocus_angle(&self) -> f32 {
+        self.defocus_angle
+    }
+    
+    fn set_defocus_angle(&mut self, defocus_angle: f32) {
+        self.defocus_angle = defocus_angle;
+        self.state_changed = true;
+    }
+    
+    pub fn focus_distance(&self) -> f32 {
+        self.focus_distance
+    }
+    
+    fn set_focus_distance(&mut self, focus_distance: f32) {
+        self.focus_distance = focus_distance;
         self.state_changed = true;
     }
 }
@@ -189,7 +222,63 @@ impl GUI {
                     ));
                     ui.separator();
 
+                    ui.text("Camera parameters");
+                    
+                    let mut fov = user_input.vfov;
+                    if ui.slider(
+                        "vfov",
+                        30.0,
+                        120.0,
+                        &mut fov,
+                    ) {
+                        user_input.set_vfov(fov);
+                    };
+
+                    let mut defocus_angle = user_input.defocus_angle;
+                    if ui.slider(
+                        "defocus angle",
+                        0.0,
+                        1.0,
+                        &mut defocus_angle,
+                    ) {
+                        user_input.set_defocus_angle(defocus_angle);
+                    };
+
+                    let mut focus_distance = user_input.focus_distance;
+                    if ui.slider(
+                        "focus distance",
+                        5.0,
+                        20.0,
+                        &mut focus_distance,
+                    ) {
+                        user_input.set_focus_distance(focus_distance);
+                    };
+                    
+                    ui.separator();
+
                     ui.text("Sampling parameters");
+
+                    // ui.slider(
+                    //     "Samples per frame",
+                    //     1,
+                    //     10,
+                    //     &mut rp.sampling_parameters.samples_per_frame,
+                    // );
+                    // 
+                    // ui.slider(
+                    //     "Samples per pixel",
+                    //     10,
+                    //     1000,
+                    //     &mut rp.sampling_parameters.samples_per_pixel,
+                    // );
+                    // 
+                    // ui.slider(
+                    //     "num bounces",
+                    //     5,
+                    //     100,
+                    //     &mut rp.sampling_parameters.num_bounces,
+                    // );
+                    
                     let mouse_pos = ui.io().mouse_pos;
                     ui.text(format!("Mouse: {:?}", mouse_pos)
                     );

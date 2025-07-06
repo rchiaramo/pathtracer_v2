@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use imgui::Context;
+use winit::window::Window;
 use crate::gui::GUI;
-use crate::pathtracer::PathTracer;
 
 pub struct WGPUState<'a> {
     window: Arc<winit::window::Window>,
@@ -78,16 +78,8 @@ impl<'a> WGPUState<'a> {
         wgpu_state
     }
 
-    pub fn get_window(&self) -> &winit::window::Window {
-        &self.window
-    }
-    
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-    
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
+    pub fn get_window(&self) -> Arc<Window> {
+        self.window.clone()
     }
 
     fn configure_surface(&mut self) {
@@ -103,6 +95,7 @@ impl<'a> WGPUState<'a> {
     pub fn render(&self, gui: &mut GUI, 
                   display_pipeline: &wgpu::RenderPipeline, 
                   display_bind_group: &wgpu::BindGroup) {
+        
         let surface_texture = self
             .surface
             .get_current_texture()
