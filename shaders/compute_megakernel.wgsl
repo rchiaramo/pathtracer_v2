@@ -34,9 +34,9 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     var pixel_color: vec3f = vec3f(image_buffer[idx][0], image_buffer[idx][1], image_buffer[idx][2]);
     var rng_state:u32 = initRng(screen_pos, image_size, frame_buffer.frame);
 
-    image_buffer[idx][0] = pixel_color.x;
-    image_buffer[idx][1] = pixel_color.y;
-    image_buffer[idx][2] = pixel_color.z;
+    image_buffer[idx][0] = 0.5; // pixel_color.x;
+    image_buffer[idx][1] = 0.1; //pixel_color.y;
+    image_buffer[idx][2] = 0.1; //pixel_color.z;
 }
 
 fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {

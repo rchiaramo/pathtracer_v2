@@ -33,10 +33,11 @@ pub struct PathTracer<'a> {
     frame_buffer: wgpu::Buffer,
     inv_projection_buffer: wgpu::Buffer,
     view_transform_buffer: wgpu::Buffer,
-    display_bind_group: wgpu::BindGroup,
-    display_pipeline: wgpu::RenderPipeline,
+    image_bind_group: wgpu::BindGroup,
     view_proj_bind_group: wgpu::BindGroup,
+    display_bind_group: wgpu::BindGroup,
     compute_shader_pipeline: wgpu::ComputePipeline,
+    display_pipeline: wgpu::RenderPipeline,
     camera_controller: CameraController
 }
 
@@ -310,9 +311,10 @@ impl<'a> PathTracer<'a> {
                 frame_buffer,
                 inv_projection_buffer,
                 view_transform_buffer,
+                image_bind_group,
+                view_proj_bind_group,
                 display_bind_group,
                 display_pipeline,
-                view_proj_bind_group,
                 compute_shader_pipeline,
                 camera_controller
             }
@@ -361,10 +363,39 @@ impl<'a> PathTracer<'a> {
         self.wgpu_state.queue.write_buffer(self.frame_buffer(), 0, frame_data);
     }
 
+    fn run_compute_kernel(&mut self) {
+        let size = self.wgpu_state.get_window().inner_size();
+        let mut encoder = self.wgpu_state.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("compute kernel encoder"),
+            });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute pass"),
+                timestamp_writes: None,
+                // Some(ComputePassTimestampWrites {
+                //     query_set: &queries.set,
+                //     beginning_of_pass_write_index: Some(queries.next_unused_query),
+                //     end_of_pass_write_index: Some(queries.next_unused_query + 1),
+                // })
+            });
+            // queries.next_unused_query += 2;
+            compute_pass.set_pipeline(&self.compute_shader_pipeline);
+            compute_pass.set_bind_group(0, &self.image_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.view_proj_bind_group, &[]);
+            compute_pass.dispatch_workgroups(size.width / 4, size.height / 4, 1);
+
+        }
+        // queries.resolve(&mut encoder);
+        self.wgpu_state.queue.submit(Some(encoder.finish()));
+    }
+
     pub fn run_path_tracer(&mut self, gui: &mut GUI) {
         let dt = gui.imgui.io().delta_time;
         self.update_buffers(dt);
 
+        self.run_compute_kernel();
         self.wgpu_state.render(gui, &self.display_pipeline, &self.display_bind_group);
     }
 }
