@@ -46,7 +46,7 @@ impl ApplicationHandler for App<'_> {
         let dt = now - gui.last_frame;
         gui.imgui.io_mut().update_delta_time(dt);
         gui.last_frame = now;
-        
+
         let progress = path_tracer.progress();
         self.render_stats.update_progress(progress, dt);
 
@@ -71,9 +71,9 @@ impl ApplicationHandler for App<'_> {
 
             WindowEvent::RedrawRequested => {
                 gui.display_ui(&window, &mut self.user_input, &self.render_stats);
-                if self.user_input.state_changed() {
-                    println!("user_input {:?}", self.user_input);
-                }
+                // if self.user_input.state_changed() {
+                //     println!("user_input {:?}", self.user_input);
+                // }
                 path_tracer.run_path_tracer(dt.as_secs_f32(), &mut self.user_input);
                 path_tracer.display_image(gui);
                 window.request_redraw();

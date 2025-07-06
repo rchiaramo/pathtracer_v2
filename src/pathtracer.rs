@@ -1,5 +1,4 @@
 use glam::{Vec3};
-use imgui::ProgressBar;
 use wgpu::{BindGroupDescriptor, BindGroupLayoutDescriptor};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::BufferDescriptor;
