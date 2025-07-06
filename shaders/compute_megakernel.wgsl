@@ -11,17 +11,32 @@ struct FrameBuffer {
 }
 
 struct ProjectionBuffer {
-    invProj: mat4x4f
+    invProj: mat4x4<f32>
 }
 
 struct ViewBuffer {
     view: mat4x4<f32>
 }
 
+struct SamplingParametersBuffer {
+    samples_per_frame: u32,
+    samples_per_pixel: u32,
+    number_of_bounces: u32,
+    clear_image_buffer: u32,
+}
+
+struct CameraBuffer {
+    position: vec4<f32>,
+    defocus_radius: f32,
+    focus_distance: f32,
+}
+
 @group(0) @binding(0) var<storage, read_write> image_buffer: array<array<f32, 3>>;
 @group(0) @binding(1) var<uniform> frame_buffer: FrameBuffer;
 @group(1) @binding(0) var<uniform> inv_projection_matrix: ProjectionBuffer;
 @group(1) @binding(1) var<uniform> view_matrix: ViewBuffer;
+@group(1) @binding(2) var<uniform> sampling_parameters: SamplingParametersBuffer;
+@group(1) @binding(3) var<uniform> camera: CameraBuffer;
 
 @compute @workgroup_size(4,4,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {

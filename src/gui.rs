@@ -1,7 +1,30 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use imgui::{FontSource, MouseCursor};
 use imgui_wgpu::{Renderer, RendererConfig};
 use imgui_winit_support::WinitPlatform;
+use crate::frames_per_second::FramesPerSecond;
+
+
+pub struct RenderStats {
+    progress: f32,
+    frames_per_second: FramesPerSecond
+}
+
+impl Default for RenderStats {
+    fn default() -> Self {
+        Self {
+            progress: 0.0,
+            frames_per_second: FramesPerSecond::new()
+        }
+    }
+}
+
+impl RenderStats {
+    pub fn update_progress(&mut self, progress: f32, dt: Duration) {
+        self.progress = progress;
+        self.frames_per_second.update(dt);
+    }
+}
 
 #[derive(Debug)]
 pub struct UserInput {
@@ -12,6 +35,9 @@ pub struct UserInput {
     vfov: f32,
     defocus_angle: f32,
     focus_distance: f32,
+    samples_per_frame: u32,
+    samples_per_pixel: u32,
+    number_of_bounces: u32,
     state_changed: bool,
 }
 
@@ -25,7 +51,10 @@ impl Default for UserInput {
             vfov: 90.0f32,
             defocus_angle: 0.0,
             focus_distance: 10.0,
-            state_changed: false,
+            samples_per_frame: 1,
+            samples_per_pixel: 50,
+            number_of_bounces: 1,
+            state_changed: true,
         }
     }
 }
@@ -98,6 +127,33 @@ impl UserInput {
         self.focus_distance = focus_distance;
         self.state_changed = true;
     }
+
+    pub fn samples_per_frame(&self) -> u32 {
+        self.samples_per_frame
+    }
+
+    fn set_samples_per_frame(&mut self, samples_per_frame: u32) {
+        self.samples_per_frame = samples_per_frame;
+        self.state_changed = true;
+    }
+
+    pub fn samples_per_pixel(&self) -> u32 {
+        self.samples_per_pixel
+    }
+
+    fn set_samples_per_pixel(&mut self, samples_per_pixel: u32) {
+        self.samples_per_pixel = samples_per_pixel;
+        self.state_changed = true;
+    }
+
+    pub fn number_of_bounces(&self) -> u32 {
+        self.number_of_bounces
+    }
+
+    fn set_number_of_bounces(&mut self, number_of_bounces: u32) {
+        self.number_of_bounces = number_of_bounces;
+        self.state_changed = true;
+    }
 }
 
 pub struct GUI {
@@ -156,7 +212,8 @@ impl GUI {
 
     pub fn display_ui(&mut self, 
                       window: &winit::window::Window, 
-                      user_input: &mut UserInput) {
+                      user_input: &mut UserInput, 
+                      render_stats: &RenderStats) {
         let ui = self.imgui.new_frame();
         self.platform.prepare_render(&ui, &window);
         
@@ -212,19 +269,22 @@ impl GUI {
         {
             let window = ui.window("Hello Imgui from WGPU!");
             window
-                .size([400.0, 100.0], imgui::Condition::FirstUseEver)
+                .size([400.0, 250.0], imgui::Condition::FirstUseEver)
                 .position([0.0, 0.0], imgui::Condition::FirstUseEver)
+                // .collapsed(true, imgui::Condition::FirstUseEver)
                 .build(|| {
                     let ds = ui.io().display_size;
-                    ui.text(format!(
-                        "Display size {:?}",
-                        ds
-                    ));
+                    let mouse_pos = ui.io().mouse_pos;
+                    ui.text(format!("Display size {:?} Mouse: {:?}", ds, mouse_pos)
+                    );
+                    ui.separator();
+                    ui.text(format!("Progress: {:.2}%  Average FPS: {:.1}s", 
+                                    render_stats.progress, render_stats.frames_per_second.get_avg_fps()));
                     ui.separator();
 
                     ui.text("Camera parameters");
                     
-                    let mut fov = user_input.vfov;
+                    let mut fov = user_input.vfov();
                     if ui.slider(
                         "vfov",
                         30.0,
@@ -234,7 +294,7 @@ impl GUI {
                         user_input.set_vfov(fov);
                     };
 
-                    let mut defocus_angle = user_input.defocus_angle;
+                    let mut defocus_angle = user_input.defocus_angle();
                     if ui.slider(
                         "defocus angle",
                         0.0,
@@ -244,7 +304,7 @@ impl GUI {
                         user_input.set_defocus_angle(defocus_angle);
                     };
 
-                    let mut focus_distance = user_input.focus_distance;
+                    let mut focus_distance = user_input.focus_distance();
                     if ui.slider(
                         "focus distance",
                         5.0,
@@ -258,30 +318,35 @@ impl GUI {
 
                     ui.text("Sampling parameters");
 
-                    // ui.slider(
-                    //     "Samples per frame",
-                    //     1,
-                    //     10,
-                    //     &mut rp.sampling_parameters.samples_per_frame,
-                    // );
-                    // 
-                    // ui.slider(
-                    //     "Samples per pixel",
-                    //     10,
-                    //     1000,
-                    //     &mut rp.sampling_parameters.samples_per_pixel,
-                    // );
-                    // 
-                    // ui.slider(
-                    //     "num bounces",
-                    //     5,
-                    //     100,
-                    //     &mut rp.sampling_parameters.num_bounces,
-                    // );
-                    
-                    let mouse_pos = ui.io().mouse_pos;
-                    ui.text(format!("Mouse: {:?}", mouse_pos)
-                    );
+                    let mut spf = user_input.samples_per_frame();
+                    if ui.slider(
+                        "Samples per frame",
+                        1,
+                        10,
+                        &mut spf,
+                    ) {
+                        user_input.set_samples_per_frame(spf);
+                    };
+
+                    let mut spp = user_input.samples_per_pixel();
+                    if ui.slider(
+                        "Samples per pixel",
+                        1,
+                        1000,
+                        &mut spp,
+                    ){
+                        user_input.set_samples_per_pixel(spp);
+                    };
+
+                    let mut nb = user_input.number_of_bounces();
+                    if ui.slider(
+                        "num bounces",
+                        1,
+                        100,
+                        &mut nb,
+                    ){
+                        user_input.set_number_of_bounces(nb);
+                    };
                 });
         }
 

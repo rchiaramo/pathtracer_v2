@@ -4,20 +4,22 @@ use crate::gui::UserInput;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct GPUCameraBuffer {
+pub struct GPUCamera {
     camera_position: Vec4,
     defocus_radius: f32,
     focus_distance: f32,
+    buffering: [f32; 2],
 }
 
-impl GPUCameraBuffer {
-    pub fn new(camera_position: Vec3, defocus_angle_rad: f32, focus_distance: f32) -> GPUCameraBuffer {
+impl GPUCamera {
+    pub fn new(camera_position: Vec3, defocus_angle_rad: f32, focus_distance: f32) -> GPUCamera {
         let defocus_radius = focus_distance * (0.5 * defocus_angle_rad).tan();
 
-        GPUCameraBuffer {
+        GPUCamera {
             camera_position: camera_position.extend(0.0),
             defocus_radius,
             focus_distance,
+            buffering: [0.0; 2],
         }
     }
 }
@@ -84,11 +86,6 @@ impl CameraController {
     pub fn reset(&mut self) { self.updated = false; }
     
     pub fn process_user_input(&mut self, input: &mut UserInput) {
-        // if there was no change to the user input, there's nothing to process
-        if !input.state_changed() {
-            return;
-        }
-        
         // process keyboard
         let key = input.key();
         let is_pressed = input.key_pressed();
@@ -165,6 +162,9 @@ impl CameraController {
         } else if self.pitch > Self::SAFE_FRAC_PI {
             self.pitch = Self::SAFE_FRAC_PI;
         }
+
+        // after everything has been updated, set the updated flag back to false
+        self.reset();
     }
     
     pub fn get_inv_projection_matrix(&self, aspect_ratio: f32) -> [[f32; 4]; 4] {
@@ -220,5 +220,9 @@ impl CameraController {
         // );
 
         world_from_camera
+    }
+    
+    pub fn get_gpu_camera(&self) -> GPUCamera {
+        GPUCamera::new(self.position, self.defocus_angle_rad, self.focus_distance)
     }
 }

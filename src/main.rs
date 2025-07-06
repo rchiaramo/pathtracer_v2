@@ -4,6 +4,8 @@ mod gui;
 mod pathtracer;
 mod utilities;
 mod camera;
+mod sampling_parameters;
+mod frames_per_second;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::App;

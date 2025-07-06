@@ -6,7 +6,7 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-use crate::gui::{UserInput, GUI};
+use crate::gui::{UserInput, GUI, RenderStats};
 use crate::pathtracer::PathTracer;
 use crate::wgpu_state::WGPUState;
 
@@ -14,7 +14,8 @@ use crate::wgpu_state::WGPUState;
 pub struct App<'a> {
     gui_controller: Option<GUI>,
     path_tracer: Option<PathTracer<'a>>,
-    user_input: UserInput
+    user_input: UserInput,
+    render_stats: RenderStats
 }
 
 impl ApplicationHandler for App<'_> {
@@ -25,7 +26,7 @@ impl ApplicationHandler for App<'_> {
                 .create_window(
                     Window::default_attributes()
                         .with_inner_size(LogicalSize::new(1200.0, 675.0))
-                        .with_title("It's WGPU time!"))
+                        .with_title("PathTracer v2"))
                 .unwrap(),
         );
 
@@ -42,9 +43,12 @@ impl ApplicationHandler for App<'_> {
 
         let gui = self.gui_controller.as_mut().unwrap();
         let now = Instant::now();
-        gui.imgui.io_mut().update_delta_time(now - gui.last_frame);
+        let dt = now - gui.last_frame;
+        gui.imgui.io_mut().update_delta_time(dt);
         gui.last_frame = now;
-        // println!("window event: {:}", (Instant::now() - gui.last_frame).as_nanos());
+        
+        let progress = path_tracer.progress();
+        self.render_stats.update_progress(progress, dt);
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
@@ -66,12 +70,12 @@ impl ApplicationHandler for App<'_> {
             },
 
             WindowEvent::RedrawRequested => {
-                gui.display_ui(&window, &mut self.user_input);
+                gui.display_ui(&window, &mut self.user_input, &self.render_stats);
                 if self.user_input.state_changed() {
                     println!("user_input {:?}", self.user_input);
                 }
-                path_tracer.process_user_input(&mut self.user_input);
-                path_tracer.run_path_tracer(gui);
+                path_tracer.run_path_tracer(dt.as_secs_f32(), &mut self.user_input);
+                path_tracer.display_image(gui);
                 window.request_redraw();
             },
 

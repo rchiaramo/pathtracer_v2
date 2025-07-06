@@ -1,22 +1,24 @@
-use glam::{Mat4, Vec3};
+use glam::{Vec3};
+use imgui::ProgressBar;
 use wgpu::{BindGroupDescriptor, BindGroupLayoutDescriptor};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::BufferDescriptor;
 use crate::camera::CameraController;
 use crate::gui::{UserInput, GUI};
+use crate::sampling_parameters::GPUSamplingParametersBuffer;
 use crate::utilities::u8cast::{any_as_u8_slice, vec_as_u8_slice};
 use crate::wgpu_state::WGPUState;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct GPUFrameBuffer {
+pub struct GPUFrameParameters {
     width: u32,
     height: u32,
     frame: u32,
     accumulated_samples: u32
 }
 
-impl GPUFrameBuffer {
+impl GPUFrameParameters {
     pub fn new(width: u32, height: u32, frame: u32, accumulated_samples: u32) -> Self {
         Self {
             width,
@@ -25,6 +27,26 @@ impl GPUFrameBuffer {
             accumulated_samples
         }
     }
+
+    pub fn update_window_size(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+    }
+
+    pub fn increment_frame(&mut self) {
+        self.frame += 1;
+    }
+
+    pub fn reset(&mut self) {
+        self.frame = 1;
+        self.accumulated_samples = 0;
+    }
+
+    pub fn increment_accumulated_samples(&mut self, samples_per_frame: u32) {
+        self.accumulated_samples += samples_per_frame;
+    }
+
+
 }
 
 pub struct PathTracer<'a> {
@@ -33,17 +55,22 @@ pub struct PathTracer<'a> {
     frame_buffer: wgpu::Buffer,
     inv_projection_buffer: wgpu::Buffer,
     view_transform_buffer: wgpu::Buffer,
+    sampling_parameters_buffer: wgpu::Buffer,
+    camera_buffer: wgpu::Buffer,
     image_bind_group: wgpu::BindGroup,
-    view_proj_bind_group: wgpu::BindGroup,
+    render_parameters_bind_group: wgpu::BindGroup,
     display_bind_group: wgpu::BindGroup,
     compute_shader_pipeline: wgpu::ComputePipeline,
     display_pipeline: wgpu::RenderPipeline,
-    camera_controller: CameraController
+    camera_controller: CameraController,
+    frame_parameters: GPUFrameParameters,
+    sampling_parameters: GPUSamplingParametersBuffer,
 }
 
 impl<'a> PathTracer<'a> {
     pub fn new(wgpu_state: WGPUState<'a>) -> Option<Self> {
         let window = wgpu_state.get_window();
+        let size = window.inner_size();
         let max_window_size = window
             .available_monitors()
             .map(|monitor| -> u32 {
@@ -82,7 +109,7 @@ impl<'a> PathTracer<'a> {
 
         let frame_buffer = device.create_buffer(&BufferDescriptor{
             label: Some("Frame Buffer"),
-            size: 16,
+            size: 4 * size_of::<f32>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -100,7 +127,7 @@ impl<'a> PathTracer<'a> {
 
         let frame_buffer_binding = wgpu::BindGroupEntry { binding: 1, resource: frame_buffer.as_entire_binding() };
 
-        // group image and frame buffers into image bind group
+        // group image and frame buffers into image_bind_group
         let image_bind_group_layout = device.create_bind_group_layout(
             &BindGroupLayoutDescriptor{
                 label: Some("image bind group layout"),
@@ -118,7 +145,7 @@ impl<'a> PathTracer<'a> {
         // set up the buffers for the inverse projection and view matrices
         let inv_projection_buffer = device.create_buffer(&BufferDescriptor{
             label: Some("Inverse Projection Matrix Buffer"),
-            size: 16 * 4,
+            size: 16 * size_of::<f32>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -140,7 +167,7 @@ impl<'a> PathTracer<'a> {
 
         let view_transform_buffer = device.create_buffer(&BufferDescriptor{
             label: Some("View Transform Buffer"),
-            size: 16 * 4,
+            size: 16 * size_of::<f32>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -160,20 +187,73 @@ impl<'a> PathTracer<'a> {
             binding: 1, resource: view_transform_buffer.as_entire_binding()
         };
 
-        let view_proj_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("View Projection Bind Group Layout"),
-            entries: &[
-                inv_projection_buffer_layout,
-                view_transform_buffer_layout,
-            ],
+        // create the sampling_parameters and camera buffers
+        let sampling_parameters_buffer = device.create_buffer(&BufferDescriptor{
+            label: Some("Sampling Parameters Buffer"),
+            size: 4 * size_of::<u32>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
-        let view_proj_bind_group = device.create_bind_group(&BindGroupDescriptor{
+        let sampling_parameters_buffer_layout = wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
+        let sampling_parameters_buffer_binding = wgpu::BindGroupEntry {
+            binding: 2, resource: sampling_parameters_buffer.as_entire_binding()
+        };
+
+        let camera_buffer = device.create_buffer(&BufferDescriptor{
+            label: Some("Camera Buffer"),
+            size: 8 * size_of::<f32>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let camera_buffer_layout = wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
+        let camera_buffer_binding = wgpu::BindGroupEntry {
+            binding: 3, resource: camera_buffer.as_entire_binding()
+        };
+
+        // group the buffers that in some way are dependent on user input
+        // the view and projection matrices, the camera, and the sampling parameters all go together
+        // they don't need to be updated if there is no change to the user input
+        let render_parameters_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("View Projection Bind Group Layout"),
+                entries: &[
+                    inv_projection_buffer_layout,
+                    view_transform_buffer_layout,
+                    sampling_parameters_buffer_layout,
+                    camera_buffer_layout,
+                ],
+            });
+
+        let render_parameters_bind_group = device.create_bind_group(&BindGroupDescriptor{
             label: Some("View Projection Bind Group"),
-            layout: &view_proj_bind_group_layout,
+            layout: &render_parameters_bind_group_layout,
             entries: &[
                 inv_projection_buffer_binding,
                 view_transform_buffer_binding,
+                sampling_parameters_buffer_binding,
+                camera_buffer_binding,
             ],
         });
 
@@ -183,7 +263,7 @@ impl<'a> PathTracer<'a> {
                 label: Some("compute shader pipeline layout"),
                 bind_group_layouts: &[
                     &image_bind_group_layout,
-                    &view_proj_bind_group_layout
+                    &render_parameters_bind_group_layout
                 ],
                 push_constant_ranges: &[],
             }
@@ -227,7 +307,7 @@ impl<'a> PathTracer<'a> {
         let image_buffer_binding = wgpu::BindGroupEntry { binding: 0, resource: image_buffer.as_entire_binding() };
         let frame_buffer_binding = wgpu::BindGroupEntry { binding: 1, resource: frame_buffer.as_entire_binding() };
 
-        let display_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let display_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Display Bind Group Layout"),
             entries: &[
                 image_buffer_layout,
@@ -303,6 +383,12 @@ impl<'a> PathTracer<'a> {
             4.0,
             0.1
         );
+
+        let frame_parameters =
+            GPUFrameParameters::new(size.width, size.height, 0, 0);
+
+        let sampling_parameters =
+            GPUSamplingParametersBuffer::new(0, 0, 0);
         
         Some(
             Self {
@@ -311,12 +397,16 @@ impl<'a> PathTracer<'a> {
                 frame_buffer,
                 inv_projection_buffer,
                 view_transform_buffer,
+                sampling_parameters_buffer,
+                camera_buffer,
                 image_bind_group,
-                view_proj_bind_group,
+                render_parameters_bind_group,
                 display_bind_group,
                 display_pipeline,
                 compute_shader_pipeline,
-                camera_controller
+                camera_controller,
+                frame_parameters,
+                sampling_parameters,
             }
         )
     }
@@ -332,35 +422,41 @@ impl<'a> PathTracer<'a> {
     fn view_transform_buffer(&self) -> &wgpu::Buffer {
         &self.view_transform_buffer
     }
-    
-    pub fn display_pipeline(&self) -> &wgpu::RenderPipeline {
-        &self.display_pipeline
+
+    fn sampling_parameters_buffer(&self) -> &wgpu::Buffer {
+        &self.sampling_parameters_buffer
     }
-    
-    pub fn display_bind_group(&self) -> &wgpu::BindGroup {
-        &self.display_bind_group
+
+    fn camera_buffer(&self) -> &wgpu::Buffer {
+        &self.camera_buffer
+    }
+
+    pub fn progress(&self) -> f32 {
+        100.0 * self.frame_parameters.accumulated_samples as f32 / self.sampling_parameters.samples_per_pixel as f32
     }
 
     pub fn process_user_input(&mut self, user_input: &mut UserInput) {
         self.camera_controller.process_user_input(user_input);
+        self.sampling_parameters.process_user_input(user_input);
     }
 
-    fn update_buffers(&mut self, dt: f32) {
-        let size = self.wgpu_state.get_window().inner_size();
-        let ar = size.width as f32 / size.height as f32;
-        if self.camera_controller.updated() {
-            self.camera_controller.update_camera(dt);
-            let proj_mat = self.camera_controller.get_inv_projection_matrix(ar);
-            let view_mat = self.camera_controller.get_view_transform();
-            unsafe {
-                self.wgpu_state.queue.write_buffer(self.inv_projection_buffer(), 0, any_as_u8_slice(&proj_mat));
-                self.wgpu_state.queue.write_buffer(self.view_transform_buffer(), 0, any_as_u8_slice(&view_mat));
-            }
-            self.camera_controller.reset();
+    pub fn display_image(&mut self, gui: &mut GUI) {
+        self.wgpu_state.render(gui, &self.display_pipeline, &self.display_bind_group);
+    }
+
+    fn update_buffers(&mut self, ar: f32) {
+        let proj_mat = self.camera_controller.get_inv_projection_matrix(ar);
+        let view_mat = self.camera_controller.get_view_transform();
+        unsafe {
+            self.wgpu_state.queue.write_buffer(self.inv_projection_buffer(), 0, any_as_u8_slice(&proj_mat));
+            self.wgpu_state.queue.write_buffer(self.view_transform_buffer(), 0, any_as_u8_slice(&view_mat));
         }
-        let frame = GPUFrameBuffer::new(size.width, size.height, 1, 1);
-        let frame_data = unsafe { any_as_u8_slice(&frame) };
-        self.wgpu_state.queue.write_buffer(self.frame_buffer(), 0, frame_data);
+        let sampling_parameters = self.sampling_parameters;
+        let camera = self.camera_controller.get_gpu_camera();
+        unsafe {
+            self.wgpu_state.queue.write_buffer(self.sampling_parameters_buffer(), 0, any_as_u8_slice(&sampling_parameters));
+            self.wgpu_state.queue.write_buffer(self.camera_buffer(), 0, any_as_u8_slice(&camera));
+        }
     }
 
     fn run_compute_kernel(&mut self) {
@@ -383,7 +479,7 @@ impl<'a> PathTracer<'a> {
             // queries.next_unused_query += 2;
             compute_pass.set_pipeline(&self.compute_shader_pipeline);
             compute_pass.set_bind_group(0, &self.image_bind_group, &[]);
-            compute_pass.set_bind_group(1, &self.view_proj_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.render_parameters_bind_group, &[]);
             compute_pass.dispatch_workgroups(size.width / 4, size.height / 4, 1);
 
         }
@@ -391,11 +487,38 @@ impl<'a> PathTracer<'a> {
         self.wgpu_state.queue.submit(Some(encoder.finish()));
     }
 
-    pub fn run_path_tracer(&mut self, gui: &mut GUI) {
-        let dt = gui.imgui.io().delta_time;
-        self.update_buffers(dt);
+    pub fn run_path_tracer(&mut self, dt: f32, user_input: &mut UserInput) {
+        let size = self.wgpu_state.get_window().inner_size();
+        self.frame_parameters.update_window_size(size.width, size.height);
 
-        self.run_compute_kernel();
-        self.wgpu_state.render(gui, &self.display_pipeline, &self.display_bind_group);
+
+        if user_input.state_changed() {
+            // this will update the camera controller and the sampling_parameters
+            self.process_user_input(user_input);
+
+            // explicitly update the camera
+            self.camera_controller.update_camera(dt);
+
+            // we set and unset the clear_image_flag here
+            self.sampling_parameters.set_clear_image_flag(true);
+
+            // reset the frame parameters to frame 1 and accumulated samples to 0
+            self.frame_parameters.reset();
+
+            // the projection matrix needs the current aspect ratio
+            let ar = size.width as f32 / size.height as f32;
+            self.update_buffers(ar);
+            self.sampling_parameters.set_clear_image_flag(false);
+        }
+
+        // regardless of user input, the frame_buffer has to be updated every frame until we hit samples_per_pixel
+        if self.frame_parameters.accumulated_samples < self.sampling_parameters.samples_per_pixel {
+            self.frame_parameters.increment_frame();
+            self.frame_parameters.increment_accumulated_samples(self.sampling_parameters.samples_per_frame());
+            let frame_data = unsafe { any_as_u8_slice(&self.frame_parameters) };
+            self.wgpu_state.queue.write_buffer(self.frame_buffer(), 0, frame_data);
+
+            self.run_compute_kernel();
+        }
     }
 }
