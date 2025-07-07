@@ -32,7 +32,7 @@ impl ApplicationHandler for App<'_> {
 
         let wgpu_state = pollster::block_on(WGPUState::new(window.clone()));
 
-        self.gui_controller = GUI::new(&window, &wgpu_state.surface_config, &wgpu_state.device, &wgpu_state.queue);
+        self.gui_controller = GUI::new(&window, wgpu_state.surface_config(), wgpu_state.device(), wgpu_state.queue());
         self.path_tracer = PathTracer::new(wgpu_state);
     }
 
@@ -48,7 +48,8 @@ impl ApplicationHandler for App<'_> {
         gui.last_frame = now;
 
         let progress = path_tracer.progress();
-        self.render_stats.update_progress(progress, dt);
+        let avg_kernel_time = path_tracer.avg_kernel_time();
+        self.render_stats.update_progress(progress, avg_kernel_time, dt);
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::KeyboardInput {

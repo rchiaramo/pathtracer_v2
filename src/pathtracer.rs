@@ -1,12 +1,16 @@
+use std::collections::VecDeque;
 use glam::{Vec3};
 use wgpu::{BindGroupDescriptor, BindGroupLayoutDescriptor};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::BufferDescriptor;
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use crate::camera::CameraController;
 use crate::gui::{UserInput, GUI};
 use crate::sampling_parameters::GPUSamplingParametersBuffer;
 use crate::utilities::u8cast::{any_as_u8_slice, vec_as_u8_slice};
+use crate::utilities::print_profiling::{console_output};
 use crate::wgpu_state::WGPUState;
+
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -64,9 +68,14 @@ pub struct PathTracer<'a> {
     camera_controller: CameraController,
     frame_parameters: GPUFrameParameters,
     sampling_parameters: GPUSamplingParametersBuffer,
+    gpu_profiler: GpuProfiler,
+    latest_profiler_results: Option<Vec<GpuTimerQueryResult>>,
+    running_avg_kernel_time: VecDeque<f32>,
 }
 
 impl<'a> PathTracer<'a> {
+    const RUNNING_AVG_LENGTH:usize = 100;
+
     pub fn new(wgpu_state: WGPUState<'a>) -> Option<Self> {
         let window = wgpu_state.get_window();
         let size = window.inner_size();
@@ -80,7 +89,7 @@ impl<'a> PathTracer<'a> {
             .max()
             .expect("must have at least one monitor");
         
-        let device = &wgpu_state.device;
+        let device = wgpu_state.device();
         
         let image = vec![[0.1f32, 0.2, 0.3]; max_window_size as usize];
         let image_bytes = unsafe {
@@ -388,6 +397,9 @@ impl<'a> PathTracer<'a> {
 
         let sampling_parameters =
             GPUSamplingParametersBuffer::new(0, 0, 0);
+
+        let gpu_profiler = GpuProfiler::new(&device, GpuProfilerSettings::default())
+            .expect("Failed to initialize GPUProfiler");
         
         Some(
             Self {
@@ -406,6 +418,9 @@ impl<'a> PathTracer<'a> {
                 camera_controller,
                 frame_parameters,
                 sampling_parameters,
+                gpu_profiler,
+                latest_profiler_results: None,
+                running_avg_kernel_time: VecDeque::with_capacity(Self::RUNNING_AVG_LENGTH)
             }
         )
     }
@@ -434,6 +449,36 @@ impl<'a> PathTracer<'a> {
         100.0 * self.frame_parameters.accumulated_samples as f32 / self.sampling_parameters.samples_per_pixel as f32
     }
 
+    pub fn avg_kernel_time(&self) -> f32 {
+        let sum: f32 = self.running_avg_kernel_time.iter().sum();
+        sum / self.running_avg_kernel_time.len() as f32
+    }
+
+    fn process_gpu_profiler_results(&mut self) {
+        // for some reason, the wgpu_profiler crate nests a simple compute kernel with a
+        // compute pass kernel underneath that takes longer (so likely the one I want)
+        // thus, the top level result isn't what I want and I need to go one level deeper
+
+        match &self.latest_profiler_results {
+            Some(results) => {
+                for scope in results {
+                    let nested_result = &scope.nested_queries;
+                    for nested_scope in nested_result {
+                        if let Some(time) = &nested_scope.time {
+                            let dt = (time.end - time.start) * 1000.0 * 1000.0;
+                            if self.running_avg_kernel_time.len() == Self::RUNNING_AVG_LENGTH {
+                                self.running_avg_kernel_time.pop_back();
+                            }
+                            self.running_avg_kernel_time.push_front(dt as f32);
+                            // println!("scope: {}", nested_scope.label);
+                        };
+                    }
+                }
+            },
+            None => println!("No profiling results available yet!"),
+        }
+    }
+
     pub fn process_user_input(&mut self, user_input: &mut UserInput) {
         self.camera_controller.process_user_input(user_input);
         self.sampling_parameters.process_user_input(user_input);
@@ -444,46 +489,49 @@ impl<'a> PathTracer<'a> {
     }
 
     fn update_buffers(&mut self, ar: f32) {
+        let queue = self.wgpu_state.queue();
         let proj_mat = self.camera_controller.get_inv_projection_matrix(ar);
         let view_mat = self.camera_controller.get_view_transform();
         unsafe {
-            self.wgpu_state.queue.write_buffer(self.inv_projection_buffer(), 0, any_as_u8_slice(&proj_mat));
-            self.wgpu_state.queue.write_buffer(self.view_transform_buffer(), 0, any_as_u8_slice(&view_mat));
+            queue.write_buffer(self.inv_projection_buffer(), 0, any_as_u8_slice(&proj_mat));
+            queue.write_buffer(self.view_transform_buffer(), 0, any_as_u8_slice(&view_mat));
         }
         let sampling_parameters = self.sampling_parameters;
         let camera = self.camera_controller.get_gpu_camera();
         unsafe {
-            self.wgpu_state.queue.write_buffer(self.sampling_parameters_buffer(), 0, any_as_u8_slice(&sampling_parameters));
-            self.wgpu_state.queue.write_buffer(self.camera_buffer(), 0, any_as_u8_slice(&camera));
+            queue.write_buffer(self.sampling_parameters_buffer(), 0, any_as_u8_slice(&sampling_parameters));
+            queue.write_buffer(self.camera_buffer(), 0, any_as_u8_slice(&camera));
         }
     }
 
     fn run_compute_kernel(&mut self) {
         let size = self.wgpu_state.get_window().inner_size();
-        let mut encoder = self.wgpu_state.device.create_command_encoder(
+
+        let mut encoder = self.wgpu_state.device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
                 label: Some("compute kernel encoder"),
             });
 
         {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute pass"),
-                timestamp_writes: None,
-                // Some(ComputePassTimestampWrites {
-                //     query_set: &queries.set,
-                //     beginning_of_pass_write_index: Some(queries.next_unused_query),
-                //     end_of_pass_write_index: Some(queries.next_unused_query + 1),
-                // })
-            });
-            // queries.next_unused_query += 2;
+            let mut scope = self.gpu_profiler.scope("Compute kernel", &mut encoder);
+            let mut compute_pass = scope.scoped_compute_pass("Scoped compute pass");
+
             compute_pass.set_pipeline(&self.compute_shader_pipeline);
             compute_pass.set_bind_group(0, &self.image_bind_group, &[]);
             compute_pass.set_bind_group(1, &self.render_parameters_bind_group, &[]);
             compute_pass.dispatch_workgroups(size.width / 4, size.height / 4, 1);
 
         }
-        // queries.resolve(&mut encoder);
-        self.wgpu_state.queue.submit(Some(encoder.finish()));
+
+        self.gpu_profiler.resolve_queries(&mut encoder);
+        self.wgpu_state.queue().submit(Some(encoder.finish()));
+
+        self.gpu_profiler.end_frame().unwrap();
+        self.latest_profiler_results = self.gpu_profiler
+            .process_finished_frame(self.wgpu_state.queue().get_timestamp_period());
+        self.process_gpu_profiler_results();
+        // console_output(&self.latest_profiler_results, self.wgpu_state.device().features());
+
     }
 
     pub fn run_path_tracer(&mut self, dt: f32, user_input: &mut UserInput) {
@@ -515,7 +563,7 @@ impl<'a> PathTracer<'a> {
             self.frame_parameters.increment_frame();
             self.frame_parameters.increment_accumulated_samples(self.sampling_parameters.samples_per_frame());
             let frame_data = unsafe { any_as_u8_slice(&self.frame_parameters) };
-            self.wgpu_state.queue.write_buffer(self.frame_buffer(), 0, frame_data);
+            self.wgpu_state.queue().write_buffer(self.frame_buffer(), 0, frame_data);
 
             self.run_compute_kernel();
         }

@@ -7,6 +7,7 @@ use crate::frames_per_second::FramesPerSecond;
 
 pub struct RenderStats {
     progress: f32,
+    avg_compute_kernel_time: f32,
     frames_per_second: FramesPerSecond
 }
 
@@ -14,14 +15,16 @@ impl Default for RenderStats {
     fn default() -> Self {
         Self {
             progress: 0.0,
+            avg_compute_kernel_time: 0.0,
             frames_per_second: FramesPerSecond::new()
         }
     }
 }
 
 impl RenderStats {
-    pub fn update_progress(&mut self, progress: f32, dt: Duration) {
+    pub fn update_progress(&mut self, progress: f32, avg_kernel_time:f32, dt: Duration) {
         self.progress = progress;
+        self.avg_compute_kernel_time = avg_kernel_time;
         self.frames_per_second.update(dt);
     }
 }
@@ -212,7 +215,7 @@ impl GUI {
 
     pub fn display_ui(&mut self, 
                       window: &winit::window::Window, 
-                      user_input: &mut UserInput, 
+                      user_input: &mut UserInput,
                       render_stats: &RenderStats) {
         let ui = self.imgui.new_frame();
         self.platform.prepare_render(&ui, &window);
@@ -275,11 +278,12 @@ impl GUI {
                 .build(|| {
                     let ds = ui.io().display_size;
                     let mouse_pos = ui.io().mouse_pos;
-                    ui.text(format!("Display size {:?} Mouse: {:?}", ds, mouse_pos)
-                    );
+                    ui.text(format!("Display size {:?} Mouse: {:?}", ds, mouse_pos));
                     ui.separator();
-                    ui.text(format!("Progress: {:.2}%  Average FPS: {:.1}s", 
-                                    render_stats.progress, render_stats.frames_per_second.get_avg_fps()));
+                    ui.text(format!("Progress: {:.2}%  Avg Kernel time: {:.3}us  Avg FPS: {:.1}s",
+                                    render_stats.progress,
+                                    render_stats.avg_compute_kernel_time,
+                                    render_stats.frames_per_second.get_avg_fps()));
                     ui.separator();
 
                     ui.text("Camera parameters");

@@ -8,7 +8,6 @@ tracers that need the basic wgpu-winit-imgui framework can start by taking the s
 from main.rs, app.rs, gui.rs, and wgpu_state.rs.
 
 ## To-do list
-- get timestamp queries running
 - update compute shader to ray trace two simple spheres hard-coded into kernel
 - compare mega kernel vs wavefront approaches
   - create a ray generation compute shader that takes camera input to generate a buffer of rays
@@ -29,3 +28,4 @@ from main.rs, app.rs, gui.rs, and wgpu_state.rs.
 - main loop accounts for frame count and accumulated samples
   - counters reset with any user input
 - render data output variable now sends render progress and avg FPS to the gui for display
+- used wgpu-profiler crate to get timestamp queries running and displaying to gui

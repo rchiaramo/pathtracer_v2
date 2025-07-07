@@ -1,16 +1,17 @@
 use std::sync::Arc;
 use imgui::Context;
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use winit::window::Window;
 use crate::gui::GUI;
 
 pub struct WGPUState<'a> {
     window: Arc<winit::window::Window>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface<'a>,
     surface_format: wgpu::TextureFormat,
-    pub(crate) surface_config: wgpu::SurfaceConfiguration,
+    surface_config: wgpu::SurfaceConfiguration,
 }
 
 impl<'a> WGPUState<'a> {
@@ -32,10 +33,14 @@ impl<'a> WGPUState<'a> {
             },
         ).await.unwrap();
 
+        // Check timestamp features.
+        let features = adapter.features()
+            & GpuProfiler::ALL_WGPU_TIMER_FEATURES;
+
         let (device, queue) = adapter
             .request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: features,
                 required_limits: wgpu::Limits::default(),
                 label: Some("device"),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -62,7 +67,6 @@ impl<'a> WGPUState<'a> {
             view_formats: vec![surface_format.add_srgb_suffix()],
         };
 
-
         let mut wgpu_state = WGPUState {
             window,
             device,
@@ -70,12 +74,24 @@ impl<'a> WGPUState<'a> {
             size,
             surface,
             surface_format,
-            surface_config
+            surface_config,
         };
 
         wgpu_state.configure_surface();
 
         wgpu_state
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
+        &self.surface_config
     }
 
     pub fn get_window(&self) -> Arc<Window> {

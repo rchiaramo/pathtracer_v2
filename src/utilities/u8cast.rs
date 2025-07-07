@@ -1,3 +1,5 @@
+use wgpu::BufferView;
+
 // note that instead of using bytemuck, we use an unsafe function (from GiGD)
 pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     unsafe {
